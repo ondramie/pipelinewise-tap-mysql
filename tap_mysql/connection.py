@@ -2,12 +2,14 @@
 # pylint: disable=missing-docstring,arguments-differ,missing-function-docstring
 
 import backoff
+import json
 import pymysql
 import ssl
 import singer
 import os
 
 from pymysql.constants import CLIENT
+from pymysqlreplication.constants import FIELD_TYPE
 
 LOGGER = singer.get_logger("tap_mysql")
 
@@ -87,8 +89,11 @@ class MySQLConnection(pymysql.connections.Connection):
         # that the connection fails, the patch is reverted by reassigning the
         # patched out method to it's original spot.
 
+        # Add JSON conversion since the tap is not smart enough to handle a string that is actually JSON
+        conv = dict(pymysql.converters.conversions)
+        conv[FIELD_TYPE.JSON] = lambda x: json.loads(x) if isinstance(x, str) else json.loads(x.decode()) if x else None
+
         # needed for RDS IAM auth
-        # TODO: add this to ECS task definition
         os.environ["LIBMYSQL_ENABLE_CLEARTEXT_PLUGIN"] = "1"
 
         args = {
@@ -101,6 +106,7 @@ class MySQLConnection(pymysql.connections.Connection):
             "charset": "utf8",
             "auth_plugin_map": {"mysql_clear_password": None},  # Required for IAM auth
             "client_flag": CLIENT.SSL | CLIENT.PLUGIN_AUTH,  # Required for IAM auth
+            "conv": conv,
         }
 
         ssl_arg = {"": True}
