@@ -53,7 +53,7 @@ confidence=
 disable=wrong-import-order,
         broad-except,
         missing-module-docstring,
-
+        too-many-locals
 
 enable=import-error,
        import-self,
@@ -322,7 +322,7 @@ ignored-classes=
 # List of members which are set dynamically and missed by pylint inference
 # system, and so shouldn't trigger E1101 when accessed. Python regular
 # expressions are accepted.
-generated-members=
+generated-members=os.environ,codecs.encode
 
 
 [VARIABLES]
