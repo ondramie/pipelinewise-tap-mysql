@@ -12,7 +12,8 @@ from tap_mysql.sync_strategies import common
 BOOKMARK_KEYS = {'replication_key', 'replication_key_value', 'version'}
 
 
-def sync_table(mysql_conn, catalog_entry, state, columns):
+def sync_table(mysql_conn, catalog_entry, state, columns, config):
+    batch_size = config['batch_size']
     common.whitelist_bookmark_keys(BOOKMARK_KEYS, catalog_entry.tap_stream_id, state)
 
     catalog_metadata = metadata.to_map(catalog_entry.metadata)
@@ -59,11 +60,14 @@ def sync_table(mysql_conn, catalog_entry, state, columns):
                     replication_key_value = pendulum.parse(replication_key_value)
 
                 select_sql += f" WHERE `{replication_key_metadata}` >= %(replication_key_value)s " \
-                              f"ORDER BY `{replication_key_metadata}` ASC"
+                              f"ORDER BY `{replication_key_metadata}` ASC" \
+                              f" LIMIT {batch_size}"
+
 
                 params['replication_key_value'] = replication_key_value
             elif replication_key_metadata is not None:
-                select_sql += f' ORDER BY `{replication_key_metadata}` ASC'
+                select_sql += f' ORDER BY `{replication_key_metadata}` ASC' \
+                              f' LIMIT {batch_size}'
 
             common.sync_query(cur,
                               catalog_entry,

@@ -1,0 +1,7 @@
+[unittest]
+start-dir = tests
+plugins = nose2.plugins.coverage
+
+[coverage]
+coverage-report = term
+coverage-min-percentage = 47

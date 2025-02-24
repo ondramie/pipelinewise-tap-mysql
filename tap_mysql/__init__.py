@@ -2,6 +2,7 @@
 import copy
 import pymysql
 import singer
+import os
 
 from typing import Dict
 from singer import metadata, get_logger
@@ -15,6 +16,7 @@ from tap_mysql.sync_strategies import binlog
 from tap_mysql.sync_strategies import common
 from tap_mysql.sync_strategies import full_table
 from tap_mysql.sync_strategies import incremental
+from tap_mysql.constants import DEFAULT_TAP_MYSQL_BATCH_SIZE
 
 LOGGER = get_logger('tap_mysql')
 
@@ -185,7 +187,7 @@ def get_binlog_streams(mysql_conn, catalog, config, state):
     return resolve_catalog(discovered, binlog_streams)
 
 
-def do_sync_incremental(mysql_conn, catalog_entry, state, columns):
+def do_sync_incremental(mysql_conn, catalog_entry, state, columns, batch_size):
     LOGGER.info("Stream %s is using incremental replication", catalog_entry.stream)
 
     md_map = metadata.to_map(catalog_entry.metadata)
@@ -198,7 +200,7 @@ def do_sync_incremental(mysql_conn, catalog_entry, state, columns):
     write_schema_message(catalog_entry=catalog_entry,
                          bookmark_properties=[replication_key])
 
-    incremental.sync_table(mysql_conn, catalog_entry, state, columns)
+    incremental.sync_table(mysql_conn, catalog_entry, state, columns, batch_size)
 
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
@@ -319,7 +321,10 @@ def do_sync_full_table(mysql_conn, catalog_entry, state, columns):
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
 
-def sync_non_binlog_streams(mysql_conn, non_binlog_catalog, state, use_gtid, engine):
+def sync_non_binlog_streams(mysql_conn, non_binlog_catalog, state, config):
+    use_gtid = config["use_gtid"]
+    engine = config["engine"]
+
     for catalog_entry in non_binlog_catalog.streams:
         columns = list(catalog_entry.schema.properties.keys())
 
@@ -345,7 +350,7 @@ def sync_non_binlog_streams(mysql_conn, non_binlog_catalog, state, use_gtid, eng
             log_engine(mysql_conn, catalog_entry)
 
             if replication_method == 'INCREMENTAL':
-                do_sync_incremental(mysql_conn, catalog_entry, state, columns)
+                do_sync_incremental(mysql_conn, catalog_entry, state, columns, config)
             elif replication_method == 'LOG_BASED':
                 do_sync_historical_binlog(mysql_conn, catalog_entry, state, columns, use_gtid, engine)
             elif replication_method == 'FULL_TABLE':
@@ -372,6 +377,8 @@ def do_sync(mysql_conn, config, catalog, state):
 
     config['use_gtid'] = config.get('use_gtid', False)
     config['engine'] = config.get('engine', MYSQL_ENGINE).lower()
+    config["batch_size"] = config.get(
+        "batch_size", os.environ.get("TAP_MYSQL_BATCH_SIZE", DEFAULT_TAP_MYSQL_BATCH_SIZE))
 
     non_binlog_catalog = get_non_binlog_streams(mysql_conn, catalog, config, state)
     binlog_catalog = get_binlog_streams(mysql_conn, catalog, config, state)
@@ -379,8 +386,7 @@ def do_sync(mysql_conn, config, catalog, state):
     sync_non_binlog_streams(mysql_conn,
                             non_binlog_catalog,
                             state,
-                            config['use_gtid'],
-                            config['engine']
+                            config
                             )
     sync_binlog_streams(mysql_conn, binlog_catalog, config, state)
 

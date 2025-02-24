@@ -1012,7 +1012,7 @@ class TestBinlogReplication(unittest.TestCase):
         global SINGER_MESSAGES
 
         engine = os.getenv('TAP_MYSQL_ENGINE', MYSQL_ENGINE)
-        gtid = binlog.fetch_current_gtid_pos(self.conn, os.environ['TAP_MYSQL_ENGINE'])
+        gtid = binlog.fetch_current_gtid_pos(self.conn, engine=engine)
 
         config = test_utils.get_db_config()
         config['use_gtid'] = True
