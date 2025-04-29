@@ -4,7 +4,7 @@ _Describe the problem your PR is trying to solve_
 
 ## Proposed changes
 
-_Describe the big picture of your changes here to communicate to the maintainers why we should accept this pull request. 
+_Describe the big picture of your changes here to communicate to the maintainers why we should accept this pull request.
 If it fixes a bug or resolves a feature request, be sure to link to that issue._
 
 

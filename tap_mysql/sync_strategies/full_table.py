@@ -2,13 +2,10 @@
 # pylint: disable=too-many-locals,missing-function-docstring
 
 import singer
-
 from singer import metadata
 
-from tap_mysql.sync_strategies import binlog
-from tap_mysql.sync_strategies import common
-
 from tap_mysql.connection import connect_with_backoff
+from tap_mysql.sync_strategies import binlog, common
 
 LOGGER = singer.get_logger('tap_mysql')
 

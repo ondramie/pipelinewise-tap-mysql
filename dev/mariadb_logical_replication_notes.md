@@ -28,7 +28,7 @@ FLUSH TABLES WITH READ LOCK;
 show master status ;
 ```
 
-Save binlog file and pos somewhere. 
+Save binlog file and pos somewhere.
 
 3. Export all objects/data from primary into a file:
 
@@ -41,7 +41,7 @@ Save binlog file and pos somewhere.
  * Log into the container: `docker exec -it mariadb_server2 bash`
  * Export objects/data: `mysql -p < masterfull.sql`
 
-3. Setup replica 
+3. Setup replica
 ```mariadb
 
 stop slave;

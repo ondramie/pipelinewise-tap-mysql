@@ -6,27 +6,23 @@ import json
 import random
 import re
 import socket
+from typing import Any, Dict, Optional, Set, Tuple, Union
+
 import pymysql.connections
 import pymysql.err
 import pytz
 import singer
 import tzlocal
-
-from typing import Dict, Set, Union, Optional, Any, Tuple
 from plpygis import Geometry
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.constants import FIELD_TYPE
-from pymysqlreplication.event import RotateEvent, MariadbGtidEvent, GtidEvent
-from pymysqlreplication.row_event import (
-    DeleteRowsEvent,
-    UpdateRowsEvent,
-    WriteRowsEvent,
-)
-from singer import utils, Schema, metadata
+from pymysqlreplication.event import GtidEvent, MariadbGtidEvent, RotateEvent
+from pymysqlreplication.row_event import DeleteRowsEvent, UpdateRowsEvent, WriteRowsEvent
+from singer import Schema, metadata, utils
 
 from tap_mysql import connection
-from tap_mysql.connection import connect_with_backoff, make_connection_wrapper, MySQLConnection
-from tap_mysql.discover_utils import discover_catalog, desired_columns, should_run_discovery
+from tap_mysql.connection import MySQLConnection, connect_with_backoff, make_connection_wrapper
+from tap_mysql.discover_utils import desired_columns, discover_catalog, should_run_discovery
 from tap_mysql.stream_utils import write_schema_message
 from tap_mysql.sync_strategies import common
 

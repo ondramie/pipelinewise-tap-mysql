@@ -1,8 +1,9 @@
 import unittest
+
 import singer
 import singer.metadata
-import tap_mysql
 
+import tap_mysql
 from tap_mysql.connection import connect_with_backoff
 
 try:

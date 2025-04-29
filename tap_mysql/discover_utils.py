@@ -2,14 +2,14 @@
 
 import collections
 import itertools
+from typing import Dict, List, Optional, Set, Tuple
+
 import pendulum
 import pymysql
-
-from typing import Optional, Dict, Tuple, Set, List
-from singer import metadata, Schema, get_logger
+from singer import Schema, get_logger, metadata
 from singer.catalog import Catalog, CatalogEntry
 
-from tap_mysql.connection import connect_with_backoff, MySQLConnection
+from tap_mysql.connection import MySQLConnection, connect_with_backoff
 from tap_mysql.sync_strategies import common
 
 LOGGER = get_logger('tap_mysql')

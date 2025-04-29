@@ -1,13 +1,9 @@
 import unittest
-
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import MagicMock, call, patch
 
 from pymysql.cursors import Cursor
-from singer import CatalogEntry
 
 from tap_mysql.connection import MySQLConnection, fetch_server_id, fetch_server_uuid
-
-import tap_mysql.connection
 
 
 class TestConnection(unittest.TestCase):

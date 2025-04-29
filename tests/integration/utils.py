@@ -1,6 +1,8 @@
 import os
+
 import pymysql
 import singer
+
 import tap_mysql
 import tap_mysql.sync_strategies.common as common
 from tap_mysql.connection import MySQLConnection
