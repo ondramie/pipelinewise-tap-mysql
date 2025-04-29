@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # pylint: disable=missing-docstring,arguments-differ,missing-function-docstring
 
-import backoff
 import json
-import pymysql
-import ssl
-import singer
 import os
+import ssl
 
+import backoff
+import pymysql
+import singer
 from pymysql.constants import CLIENT
 from pymysqlreplication.constants import FIELD_TYPE
 

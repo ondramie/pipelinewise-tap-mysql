@@ -1,19 +1,19 @@
 1.5.6 (2023-08-10)
 ------------------
-* LOG_BASED, INCREMENTAL and FULL TABLE: 
+* LOG_BASED, INCREMENTAL and FULL TABLE:
    * Zero-pad fixed-length binary fields
 
 
 1.5.5 (2023-07-05)
 ------------------
-* LOG_BASED: 
+* LOG_BASED:
    * Fix: `LookupError: unknown encoding: utf8mb3`
    * Bump plpygis from `0.2.0` to `0.2.1`
-  
+
 
 1.5.4 (2023-05-22)
 ------------------
-* LOG_BASED: 
+* LOG_BASED:
    * Bump pymsql-replication from `0.30` to `0.40`
    * Remove the custom BinlogStreamReader
 
@@ -35,7 +35,7 @@
 
 1.5.0 (2022-03-11)
 ------------------
-* Support logical replication using GTID, for both Mariadb & MySql 
+* Support logical replication using GTID, for both Mariadb & MySql
 * Log error message when session sqls fail
 * Bump depenedencies to support Mysql 8
 * Migrate CI to Github Actions.

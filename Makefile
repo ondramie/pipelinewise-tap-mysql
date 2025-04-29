@@ -15,20 +15,19 @@ unit_test:
 	nose2 -v --with-coverage --coverage-report term -s tests/unit $(extra_args)
 
 start_db_x86:
-	docker-compose -f docker-compose.x86.yml up -d
+	docker compose -f docker-compose.x86.yml up -d
 	@echo "Waiting for databases to initialize..."
 	@sleep 10
 
 # Start database for ARM architecture
 start_db_arm:
-	docker-compose -f docker-compose.arm64.yml up -d
+	docker compose -f docker-compose.arm64.yml up -d
 	@echo "Waiting for databases to initialize..."
 	@sleep 10
 
 stop_db:
-	docker-compose -f docker-compose.x86.yml down 2>/dev/null || true
-	docker-compose -f docker-compose.arm64.yml down 2>/dev/null || true
-
+	docker compose -f docker-compose.x86.yml down 2>/dev/null || true
+	docker compose -f docker-compose.arm64.yml down 2>/dev/null || true
 
 integration_test:
 ifeq ($(ARCH),arm64)

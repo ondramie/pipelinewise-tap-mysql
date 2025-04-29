@@ -1,20 +1,18 @@
 import datetime
-import socket
-
-import pytz
 import os
-
+import socket
 from collections import namedtuple
 from typing import Dict
 from unittest import TestCase
-from unittest.mock import patch, Mock, call, MagicMock
+from unittest.mock import MagicMock, Mock, call, patch
 
+import pytz
 from pymysql import InternalError
 from pymysql.cursors import Cursor
 from pymysqlreplication.constants import FIELD_TYPE
-from pymysqlreplication.event import RotateEvent, MariadbGtidEvent, GtidEvent
-from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
-from singer import CatalogEntry, Schema, Catalog, RecordMessage, StateMessage, SchemaMessage
+from pymysqlreplication.event import GtidEvent, MariadbGtidEvent, RotateEvent
+from pymysqlreplication.row_event import DeleteRowsEvent, UpdateRowsEvent, WriteRowsEvent
+from singer import Catalog, CatalogEntry, RecordMessage, Schema, SchemaMessage, StateMessage
 
 from tap_mysql import connection
 from tap_mysql.connection import MySQLConnection

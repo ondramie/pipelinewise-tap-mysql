@@ -1,7 +1,6 @@
 # pylint: disable=missing-docstring,too-many-locals
 
 import singer
-
 from singer import metadata
 
 

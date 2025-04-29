@@ -2,10 +2,10 @@
 # pylint: disable=missing-function-docstring,too-many-arguments,too-many-locals
 import copy
 import datetime
-import singer
 import time
 
-from singer import metadata, utils, metrics
+import singer
+from singer import metadata, metrics, utils
 
 from tap_mysql.stream_utils import get_key_properties
 
@@ -204,3 +204,6 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
             row = cursor.fetchone()
 
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
+
+    # Return the number of rows processed for batch tracking
+    return rows_saved

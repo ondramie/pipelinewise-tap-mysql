@@ -1,0 +1,29 @@
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+    -   id: trailing-whitespace  # Remove trailing whitespace
+    -   id: end-of-file-fixer    # Ensures files end with a newline
+    -   id: check-yaml           # Validates yaml files
+    -   id: check-added-large-files  # Prevents giant files from being committed
+    -   id: debug-statements     # Check for debugger imports and py37+ `breakpoint()` calls
+    -   id: check-merge-conflict  # Check for files that contain merge conflict strings
+
+-   repo: https://github.com/pycqa/pylint
+    rev: v2.13.2  # Match version in setup.py
+    hooks:
+    -   id: pylint
+        args: [--disable=all, --enable=unused-import,trailing-whitespace]
+        additional_dependencies: [pymysql, pendulum, singer-python, mysql-replication, plpygis]
+
+-   repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+    -   id: isort
+        args: [--profile=black, --line-length=100]
+
+-   repo: https://github.com/asottile/pyupgrade
+    rev: v3.3.1
+    hooks:
+    -   id: pyupgrade
+        args: [--py3-plus]
