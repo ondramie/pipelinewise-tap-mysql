@@ -57,69 +57,87 @@ def sync_table(mysql_conn, catalog_entry, state, columns, config):  # pylint: di
         with open_conn.cursor() as cur:
             # Track whether we need to continue processing batches
             processed_count = 0
-            offset = 0
             more_data = True
+            current_replication_key_value = replication_key_value
 
-            # Main batch processing loop
+            if replication_key_metadata is None:
+                # If no replication key exists, just do a full table sync
+                LOGGER.info("No replication key found for stream %s, doing full table sync", catalog_entry.stream)
+                select_sql = common.generate_select_sql(catalog_entry, columns)
+                params = {}
+                common.sync_query(cur,
+                                catalog_entry,
+                                state,
+                                select_sql,
+                                columns,
+                                stream_version,
+                                params,
+                                config)
+                LOGGER.info('Incremental sync complete. Processed %s records.', processed_count)
+                return
+
+            # Main cursor-based pagination loop (more efficient than OFFSET for large datasets)
             while more_data:
                 select_sql = common.generate_select_sql(catalog_entry, columns)
                 params = {}
 
-                if replication_key_metadata is None:
-                    # If no replication key exists, just do a full table sync
-                    LOGGER.info("No replication key found for stream %s, doing full table sync", catalog_entry.stream)
-                    common.sync_query(cur,
-                                    catalog_entry,
-                                    state,
-                                    select_sql,
-                                    columns,
-                                    stream_version,
-                                    params,
-                                    config)
-                    break
-
-                # Use >= to include records with identical replication key values
-                if replication_key_value is not None:
+                # Use cursor-based pagination instead of OFFSET for better performance
+                if current_replication_key_value is not None:
                     # Check if replication_key_value is already a DateTime object or needs parsing
                     if (catalog_entry.schema.properties[replication_key_metadata].format == 'date-time' and
-                            not isinstance(replication_key_value, pendulum.DateTime)):
-                        replication_key_value = pendulum.parse(replication_key_value)
+                            not isinstance(current_replication_key_value, pendulum.DateTime)):
+                        current_replication_key_value = pendulum.parse(current_replication_key_value)
 
-                    select_sql += f" WHERE `{replication_key_metadata}` >= %(replication_key_value)s " \
+                    # Use > for cursor-based pagination to avoid duplicates
+                    select_sql += f" WHERE `{replication_key_metadata}` > %(replication_key_value)s " \
                                 f"ORDER BY `{replication_key_metadata}` ASC " \
-                                f"LIMIT {batch_size} OFFSET {offset}"
+                                f"LIMIT {batch_size}"
 
-                    params['replication_key_value'] = replication_key_value
+                    params['replication_key_value'] = current_replication_key_value
+
+                    LOGGER.info('Processing batch: replication_key %s > %s, limit %s (cursor-based)',
+                                replication_key_metadata, current_replication_key_value, batch_size)
                 else:
+                    # First batch - use >= to include the starting value
                     select_sql += f' ORDER BY `{replication_key_metadata}` ASC ' \
-                                f' LIMIT {batch_size} OFFSET {offset}'
+                                f' LIMIT {batch_size}'
 
-                LOGGER.info('Processing batch: replication_key %s >= %s, limit %s, offset %s',
-                            replication_key_metadata, replication_key_value, batch_size, offset)
+                    LOGGER.info('Processing first batch: replication_key %s, limit %s',
+                                replication_key_metadata, batch_size)
 
-                # Process the records in this batch
+                # Execute query and process with fetchmany for memory efficiency
                 cur.execute(select_sql, params)
 
-                rows = cur.fetchall()
-                rows_count = len(rows)
+                # Get fetch_size from config for memory-efficient processing
+                from tap_mysql.constants import (
+                    DEFAULT_FETCH_SIZE,  # pylint: disable=import-outside-toplevel
+                )
+                fetch_size = config.get('fetch_size', DEFAULT_FETCH_SIZE) if config else DEFAULT_FETCH_SIZE
 
-                if rows_count == 0:
-                    LOGGER.info('No records returned, ending sync')
-                    more_data = False
-                    continue
-
-                # Process each row individually (instead of using sync_query) to avoid state updates
-                # messing with our logic
+                batch_row_count = 0
                 time_extracted = singer.utils.now()
-                for row in rows:
-                    record_message = common.write_record_message(catalog_entry,
-                                                                 stream_version,
-                                                                 row,
-                                                                 columns,
-                                                                 time_extracted)
+                last_replication_key_value = current_replication_key_value
 
-                    # Store the current replication key value in state
-                    if replication_key_metadata:
+                # Process records in smaller chunks using fetchmany for memory efficiency
+                while True:
+                    rows = cur.fetchmany(fetch_size)
+                    if not rows:
+                        break
+
+                    for row in rows:
+                        batch_row_count += 1
+                        processed_count += 1
+
+                        record_message = common.write_record_message(catalog_entry,
+                                                                     stream_version,
+                                                                     row,
+                                                                     columns,
+                                                                     time_extracted)
+
+                        # Update the cursor for next batch
+                        last_replication_key_value = record_message.record[replication_key_metadata]
+
+                        # Store the current replication key value in state
                         state = singer.write_bookmark(state,
                                                     catalog_entry.tap_stream_id,
                                                     'replication_key',
@@ -128,20 +146,22 @@ def sync_table(mysql_conn, catalog_entry, state, columns, config):  # pylint: di
                         state = singer.write_bookmark(state,
                                                     catalog_entry.tap_stream_id,
                                                     'replication_key_value',
-                                                    record_message.record[replication_key_metadata])
+                                                    last_replication_key_value)
 
-                # Update our counters
-                processed_count += rows_count
-                LOGGER.info('Processed %s records in this batch, %s total', rows_count, processed_count)
+                        # Write state periodically to enable resumption
+                        if processed_count % 1000 == 0:
+                            singer.write_message(singer.StateMessage(value=state))
+
+                LOGGER.info('Processed %s records in this batch, %s total', batch_row_count, processed_count)
 
                 # Write state after each batch
                 singer.write_message(singer.StateMessage(value=state))
 
                 # If we got fewer records than requested, we're done
-                if rows_count < batch_size:
+                if batch_row_count < batch_size:
                     more_data = False
                 else:
-                    # Otherwise, increase the offset and get the next batch
-                    offset += batch_size
+                    # Update cursor for next batch
+                    current_replication_key_value = last_replication_key_value
 
             LOGGER.info('Incremental sync complete. Processed %s records.', processed_count)

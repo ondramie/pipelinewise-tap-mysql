@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # pylint: disable=too-many-locals,missing-function-docstring
 
+import copy
+
 import singer
 from singer import metadata
 
@@ -99,13 +101,29 @@ def generate_pk_clause(catalog_entry, state):
                                           'last_pk_fetched')
 
     if last_pk_fetched:
-        pk_comparisons = [
-            f"({common.escape(pk)} > {last_pk_fetched[pk]} AND {common.escape(pk)} <= {max_pk_values[pk]})"
-            for pk in key_properties]
-    else:
-        pk_comparisons = [f"{common.escape(pk)} <= {max_pk_values[pk]}" for pk in key_properties]
+        # For cursor-based pagination, use > for the last fetched value
+        # This is more efficient than OFFSET for large datasets
+        if len(key_properties) == 1:
+            # Single primary key - simple cursor-based pagination
+            pk = key_properties[0]
+            escaped_pk = common.escape(pk)
+            sql = f' WHERE {escaped_pk} > {last_pk_fetched[pk]} AND {escaped_pk} <= {max_pk_values[pk]} ORDER BY {escaped_pk} ASC'
+        else:
+            # Composite primary key - use tuple comparison for cursor-based pagination
+            pk_comparisons = []
+            for pk in key_properties:
+                escaped_pk = common.escape(pk)
+                pk_comparisons.append(f"{escaped_pk} <= {max_pk_values[pk]}")
 
-    sql = f' WHERE {" AND ".join(pk_comparisons)} ORDER BY {", ".join(escaped_columns)} ASC'
+            # Create tuple comparison for cursor-based pagination
+            pk_tuple = f"({', '.join([common.escape(pk) for pk in key_properties])})"
+            last_pk_tuple = f"({', '.join([str(last_pk_fetched[pk]) for pk in key_properties])})"
+
+            sql = f' WHERE {pk_tuple} > {last_pk_tuple} AND {" AND ".join(pk_comparisons)} ORDER BY {", ".join(escaped_columns)} ASC'
+    else:
+        # First batch
+        pk_comparisons = [f"{common.escape(pk)} <= {max_pk_values[pk]}" for pk in key_properties]
+        sql = f' WHERE {" AND ".join(pk_comparisons)} ORDER BY {", ".join(escaped_columns)} ASC'
 
     return sql
 
@@ -140,35 +158,102 @@ def sync_table(mysql_conn, catalog_entry, state, columns, stream_version, config
         with open_conn.cursor() as cur:
             select_sql = common.generate_select_sql(catalog_entry, columns)
 
+            # Get batch size from config for memory-efficient processing
+            batch_size = int(config.get('batch_size', 10000)) if config else 10000
+
             if key_props_are_auto_incrementing:
-                LOGGER.info("Detected auto-incrementing primary key(s) - will replicate incrementally")
+                LOGGER.info("Detected auto-incrementing primary key(s) - will replicate incrementally with cursor-based pagination")
                 max_pk_values = singer.get_bookmark(state,
                                                     catalog_entry.tap_stream_id,
                                                     'max_pk_values') or get_max_pk_values(cur, catalog_entry)
 
                 if not max_pk_values:
                     LOGGER.info("No max value for auto-incrementing PK found for table %s", catalog_entry.table)
+                    params = {}
+                    # Use regular sync_query for tables without data
+                    common.sync_query(cur,
+                                      catalog_entry,
+                                      state,
+                                      select_sql,
+                                      columns,
+                                      stream_version,
+                                      params,
+                                      config)
                 else:
                     state = singer.write_bookmark(state,
                                                   catalog_entry.tap_stream_id,
                                                   'max_pk_values',
                                                   max_pk_values)
 
-                    pk_clause = generate_pk_clause(catalog_entry, state)
+                    # Use cursor-based pagination for efficient large table processing
+                    processed_count = 0
+                    more_data = True
 
-                    select_sql += pk_clause
+                    while more_data:
+                        pk_clause = generate_pk_clause(catalog_entry, state)
+                        batch_sql = select_sql + pk_clause + f" LIMIT {batch_size}"
 
-            params = {}
+                        LOGGER.info("Processing batch with cursor-based pagination, limit %s", batch_size)
 
-            # pylint:disable=duplicate-code
-            common.sync_query(cur,
-                              catalog_entry,
-                              state,
-                              select_sql,
-                              columns,
-                              stream_version,
-                              params,
-                              config)
+                        params = {}
+                        cur.execute(batch_sql, params)
+
+                        # Get fetch_size from config for memory-efficient processing
+                        from tap_mysql.constants import (
+                            DEFAULT_FETCH_SIZE,  # pylint: disable=import-outside-toplevel
+                        )
+                        fetch_size = config.get('fetch_size', DEFAULT_FETCH_SIZE) if config else DEFAULT_FETCH_SIZE
+
+                        batch_row_count = 0
+                        time_extracted = singer.utils.now()
+
+                        # Process records in smaller chunks using fetchmany for memory efficiency
+                        while True:
+                            rows = cur.fetchmany(fetch_size)
+                            if not rows:
+                                break
+
+                            for row in rows:
+                                batch_row_count += 1
+                                processed_count += 1
+
+                                record_message = common.write_record_message(catalog_entry, stream_version, row, columns, time_extracted)
+
+                                # Update last_pk_fetched for cursor-based pagination
+                                key_properties = common.get_key_properties(catalog_entry)
+                                last_pk_fetched = {k: v for k, v in record_message.record.items() if k in key_properties}
+
+                                state = singer.write_bookmark(state,
+                                                              catalog_entry.tap_stream_id,
+                                                              'last_pk_fetched',
+                                                              last_pk_fetched)
+
+                                # Write state periodically to enable resumption
+                                if processed_count % 1000 == 0:
+                                    singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
+
+                        LOGGER.info('Processed %s records in this batch, %s total', batch_row_count, processed_count)
+
+                        # Write state after each batch
+                        singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
+
+                        # If we got fewer records than requested, we're done
+                        if batch_row_count < batch_size:
+                            more_data = False
+
+                    LOGGER.info('Full table sync complete. Processed %s records.', processed_count)
+            else:
+                # For tables without auto-incrementing keys, use regular sync_query
+                LOGGER.info("No auto-incrementing primary key detected - using standard sync")
+                params = {}
+                common.sync_query(cur,
+                                  catalog_entry,
+                                  state,
+                                  select_sql,
+                                  columns,
+                                  stream_version,
+                                  params,
+                                  config)
 
     # clear max pk value and last pk fetched upon successful sync
     singer.clear_bookmark(state, catalog_entry.tap_stream_id, 'max_pk_values')
