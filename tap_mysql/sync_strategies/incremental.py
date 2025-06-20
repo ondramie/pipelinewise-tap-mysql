@@ -12,7 +12,7 @@ BOOKMARK_KEYS = {'replication_key', 'replication_key_value', 'version'}
 LOGGER = singer.get_logger('tap_mysql')
 
 
-def sync_table(mysql_conn, catalog_entry, state, columns, config):
+def sync_table(mysql_conn, catalog_entry, state, columns, config):  # pylint: disable=too-many-statements
     batch_size = int(config.get('batch_size', 1000))
     common.whitelist_bookmark_keys(BOOKMARK_KEYS, catalog_entry.tap_stream_id, state)
 
@@ -74,7 +74,8 @@ def sync_table(mysql_conn, catalog_entry, state, columns, config):
                                     select_sql,
                                     columns,
                                     stream_version,
-                                    params)
+                                    params,
+                                    config)
                     break
 
                 # Use >= to include records with identical replication key values
@@ -93,7 +94,8 @@ def sync_table(mysql_conn, catalog_entry, state, columns, config):
                     select_sql += f' ORDER BY `{replication_key_metadata}` ASC ' \
                                 f' LIMIT {batch_size} OFFSET {offset}'
 
-                LOGGER.info(f'Processing batch: replication_key {replication_key_metadata} >= {replication_key_value}, limit {batch_size}, offset {offset}')
+                LOGGER.info('Processing batch: replication_key %s >= %s, limit %s, offset %s',
+                            replication_key_metadata, replication_key_value, batch_size, offset)
 
                 # Process the records in this batch
                 cur.execute(select_sql, params)
@@ -106,15 +108,15 @@ def sync_table(mysql_conn, catalog_entry, state, columns, config):
                     more_data = False
                     continue
 
-                # Process each row individually (instead of using sync_query) to avoid state updates messing with our logic
+                # Process each row individually (instead of using sync_query) to avoid state updates
+                # messing with our logic
                 time_extracted = singer.utils.now()
                 for row in rows:
-                    record_message = common.row_to_singer_record(catalog_entry,
-                                                             stream_version,
-                                                             row,
-                                                             columns,
-                                                             time_extracted)
-                    singer.write_message(record_message)
+                    record_message = common.write_record_message(catalog_entry,
+                                                                 stream_version,
+                                                                 row,
+                                                                 columns,
+                                                                 time_extracted)
 
                     # Store the current replication key value in state
                     if replication_key_metadata:
@@ -130,7 +132,7 @@ def sync_table(mysql_conn, catalog_entry, state, columns, config):
 
                 # Update our counters
                 processed_count += rows_count
-                LOGGER.info(f'Processed {rows_count} records in this batch, {processed_count} total')
+                LOGGER.info('Processed %s records in this batch, %s total', rows_count, processed_count)
 
                 # Write state after each batch
                 singer.write_message(singer.StateMessage(value=state))
@@ -142,4 +144,4 @@ def sync_table(mysql_conn, catalog_entry, state, columns, config):
                     # Otherwise, increase the offset and get the next batch
                     offset += batch_size
 
-            LOGGER.info(f'Incremental sync complete. Processed {processed_count} records.')
+            LOGGER.info('Incremental sync complete. Processed %s records.', processed_count)
