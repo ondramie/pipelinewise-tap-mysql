@@ -6,7 +6,7 @@
   "filter_db": "db1,db2",
   "engine": "<mysql|mariadb>",
   "use_gtid": <boolean>,
-  "cursorclass": "<pymysql cursor Class>"
+  "cursorclass": "<pymysql cursor Class>",
   "server_id": "",
   "database": "",
   "ssl": "",
@@ -14,6 +14,7 @@
   "ssl_cert": "",
   "ssl_key": "",
   "internal_hostname": "",
+  "fetch_size": 10000,
   "session_sqls": [
     "SET @@session.time_zone=\"+0:00\"",
     "SET @@session.wait_timeout=28800",

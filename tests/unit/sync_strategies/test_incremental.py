@@ -56,10 +56,11 @@ class TestIncrementalSyncStrategy(unittest.TestCase):
 
                 # Assert that sync_query was called with the right parameters for the full table sync
                 mock_sync_query.assert_called_once()
-                assert len(mock_sync_query.call_args[0]) == 6  # Check number of args
-                assert mock_sync_query.call_args[0][0] == mock_cursor  # cursor
-                assert mock_sync_query.call_args[0][1] == catalog_entry  # catalog_entry
-                # Remaining args: state, select_sql, columns, stream_version, params
+                args = mock_sync_query.call_args[0]
+                assert len(args) == 8  # Check number of args (added config parameter)
+                assert args[0] == mock_cursor  # cursor
+                assert args[1] == catalog_entry  # catalog_entry
+                # Remaining args: state, select_sql, columns, stream_version, params, config
 
     @patch('singer.write_message')
     def test_sync_table_with_batching(self, mock_write_message):
@@ -89,7 +90,7 @@ class TestIncrementalSyncStrategy(unittest.TestCase):
             }
         }
         columns = ['id', 'val', 'updated_at']
-        config = {'batch_size': 100}
+        config = {'batch_size': 2}  # Small batch size to test pagination
 
         # Mock connect_with_backoff and cursor
         mock_open_conn = MagicMock()
@@ -98,7 +99,7 @@ class TestIncrementalSyncStrategy(unittest.TestCase):
         mock_open_conn.__enter__.return_value = mock_open_conn
         mock_open_conn.cursor.return_value = mock_cursor
 
-        # Setup mock to return two batches, then empty
+        # Setup mock to return batches, then empty to end the loop
         batch1 = [
             (1, 'value1', datetime.datetime(2022, 1, 2, 0, 0, 0)),
             (2, 'value2', datetime.datetime(2022, 1, 3, 0, 0, 0))
@@ -124,25 +125,15 @@ class TestIncrementalSyncStrategy(unittest.TestCase):
 
                 incremental.sync_table(mysql_conn, catalog_entry, state, columns, config)
 
-                # Verify cursor was called with correct SQL statements
-                expected_calls = [
-                    # First batch
-                    call(mock_cursor.mogrify().__str__(), {'replication_key_value': pendulum.parse('2022-01-01T00:00:00+00:00')}),
-                    # Second batch
-                    call(mock_cursor.mogrify().__str__(), {'replication_key_value': '2022-01-03T00:00:00+00:00'}),
-                    # Third batch (empty)
-                    call(mock_cursor.mogrify().__str__(), {'replication_key_value': '2022-01-04T00:00:00+00:00'})
-                ]
-
-                # Check that execute was called with the expected parameters
-                self.assertEqual(mock_cursor.execute.call_count, 3)
+                # Check that execute was called with the expected number of times (2: two batches, algorithm stops when batch has fewer records than batch_size)
+                self.assertEqual(mock_cursor.execute.call_count, 2)
 
                 # Verify record messages were written
-                record_message_writes = [call for call in mock_write_message.call_args_list if isinstance(call[0][0], singer.RecordMessage)]
+                record_message_writes = [c for c in mock_write_message.call_args_list if isinstance(c[0][0], singer.RecordMessage)]
                 self.assertEqual(len(record_message_writes), 3)
 
-                # Check that state messages were written (one after each batch)
-                state_message_writes = [call for call in mock_write_message.call_args_list if isinstance(call[0][0], singer.StateMessage)]
+                # Check that state messages were written (one after each non-empty batch)
+                state_message_writes = [c for c in mock_write_message.call_args_list if isinstance(c[0][0], singer.StateMessage)]
                 self.assertEqual(len(state_message_writes), 2)  # One after each non-empty batch
 
                 # Verify final state reflects latest replication key value
