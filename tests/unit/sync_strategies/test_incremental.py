@@ -99,7 +99,7 @@ class TestIncrementalSyncStrategy(unittest.TestCase):
         mock_open_conn.__enter__.return_value = mock_open_conn
         mock_open_conn.cursor.return_value = mock_cursor
 
-        # Setup mock to return batches, then empty to end the loop
+        # Setup mock to return batches using fetchmany pattern
         batch1 = [
             (1, 'value1', datetime.datetime(2022, 1, 2, 0, 0, 0)),
             (2, 'value2', datetime.datetime(2022, 1, 3, 0, 0, 0))
@@ -107,9 +107,19 @@ class TestIncrementalSyncStrategy(unittest.TestCase):
         batch2 = [
             (3, 'value3', datetime.datetime(2022, 1, 4, 0, 0, 0))
         ]
-        batch3 = []  # Empty batch to end the loop
 
-        mock_cursor.fetchall.side_effect = [batch1, batch2, batch3]
+        # Mock fetchmany to return batches in sequence
+        def mock_fetchmany(size):
+            if mock_cursor.fetchmany.call_count == 1:
+                return batch1
+            elif mock_cursor.fetchmany.call_count == 2:
+                return []  # End first query
+            elif mock_cursor.fetchmany.call_count == 3:
+                return batch2
+            else:
+                return []  # End second query
+
+        mock_cursor.fetchmany.side_effect = mock_fetchmany
 
         with patch('tap_mysql.sync_strategies.incremental.connect_with_backoff') as mock_connect:
             mock_connect.return_value = mock_open_conn
@@ -176,11 +186,22 @@ class TestIncrementalSyncStrategy(unittest.TestCase):
         mock_open_conn.__enter__.return_value = mock_open_conn
         mock_open_conn.cursor.return_value = mock_cursor
 
-        # Setup mock to return multiple batches to test pagination
+        # Setup mock to return multiple batches to test pagination using fetchmany pattern
         batch1 = [(1, 'value1', 101), (2, 'value2', 102)]  # Full batch
         batch2 = [(3, 'value3', 103)]  # Partial batch (should end pagination)
 
-        mock_cursor.fetchall.side_effect = [batch1, batch2]
+        # Mock fetchmany to return batches in sequence for pagination test
+        def mock_fetchmany_pagination(size):
+            if mock_cursor.fetchmany.call_count == 1:
+                return batch1
+            elif mock_cursor.fetchmany.call_count == 2:
+                return []  # End first query
+            elif mock_cursor.fetchmany.call_count == 3:
+                return batch2
+            else:
+                return []  # End second query
+
+        mock_cursor.fetchmany.side_effect = mock_fetchmany_pagination
 
         with patch('tap_mysql.sync_strategies.incremental.connect_with_backoff') as mock_connect:
             mock_connect.return_value = mock_open_conn
@@ -199,13 +220,15 @@ class TestIncrementalSyncStrategy(unittest.TestCase):
                 # Verify cursor.execute was called twice (once for each batch)
                 self.assertEqual(mock_cursor.execute.call_count, 2)
 
-                # First call should have offset 0
+                # Both calls should use cursor-based pagination with WHERE clause
                 first_call = mock_cursor.execute.call_args_list[0]
-                self.assertIn('LIMIT 2 OFFSET 0', first_call[0][0])
+                self.assertIn('WHERE `updated_at` >', first_call[0][0])
+                self.assertIn('LIMIT 2', first_call[0][0])
 
-                # Second call should have offset 2
+                # Second call should also use cursor-based pagination
                 second_call = mock_cursor.execute.call_args_list[1]
-                self.assertIn('LIMIT 2 OFFSET 2', second_call[0][0])
+                self.assertIn('WHERE `updated_at` >', second_call[0][0])
+                self.assertIn('LIMIT 2', second_call[0][0])
 
                 # Verify final state has the latest replication key value
                 self.assertEqual(state['bookmarks']['test-stream']['replication_key_value'], 103)
@@ -245,11 +268,14 @@ class TestIncrementalSyncStrategy(unittest.TestCase):
         mock_open_conn.__enter__.return_value = mock_open_conn
         mock_open_conn.cursor.return_value = mock_cursor
 
-        # Return a single record
-        mock_cursor.fetchall.side_effect = [
-            [(1, datetime.datetime(2023, 1, 2, 0, 0, 0))],
-            []  # Empty batch to end the loop
-        ]
+        # Return a single record using fetchmany pattern
+        def mock_fetchmany_date_parsing(size):
+            if mock_cursor.fetchmany.call_count == 1:
+                return [(1, datetime.datetime(2023, 1, 2, 0, 0, 0))]
+            else:
+                return []  # End query
+
+        mock_cursor.fetchmany.side_effect = mock_fetchmany_date_parsing
 
         with patch('tap_mysql.sync_strategies.incremental.connect_with_backoff') as mock_connect:
             mock_connect.return_value = mock_open_conn
