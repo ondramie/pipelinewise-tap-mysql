@@ -53,7 +53,10 @@ confidence=
 disable=wrong-import-order,
         broad-except,
         missing-module-docstring,
-        too-many-locals
+        too-many-locals,
+        duplicate-code,
+        import-outside-toplevel,
+        too-many-nested-blocks
 
 enable=import-error,
        import-self,
