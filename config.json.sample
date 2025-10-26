@@ -9,6 +9,7 @@
   "cursorclass": "<pymysql cursor Class>",
   "server_id": "",
   "database": "",
+  "start_date": "2024-01-01T00:00:00Z",
   "ssl": "",
   "ssl_ca": "",
   "ssl_cert": "",

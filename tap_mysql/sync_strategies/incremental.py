@@ -12,7 +12,7 @@ BOOKMARK_KEYS = {'replication_key', 'replication_key_value', 'version'}
 LOGGER = singer.get_logger('tap_mysql')
 
 
-def sync_table(mysql_conn, catalog_entry, state, columns, config):  # pylint: disable=too-many-statements
+def sync_table(mysql_conn, catalog_entry, state, columns, config):  # pylint: disable=too-many-statements,too-many-branches,import-outside-toplevel
     batch_size = int(config.get('batch_size', 1000))
     common.whitelist_bookmark_keys(BOOKMARK_KEYS, catalog_entry.tap_stream_id, state)
 
@@ -37,6 +37,12 @@ def sync_table(mysql_conn, catalog_entry, state, columns, config):  # pylint: di
                                       replication_key_metadata)
         state = singer.clear_bookmark(state, catalog_entry.tap_stream_id, 'replication_key_value')
 
+    use_start_date = False
+    if replication_key_value is None and config.get('start_date'):
+        replication_key_value = config.get('start_date')
+        use_start_date = True
+        LOGGER.info('No state found, using start_date: %s', replication_key_value)
+
     LOGGER.info('Starting incremental sync with replication_key: %s, value: %s',
                 replication_key_metadata, replication_key_value)
 
@@ -59,6 +65,7 @@ def sync_table(mysql_conn, catalog_entry, state, columns, config):  # pylint: di
             processed_count = 0
             more_data = True
             current_replication_key_value = replication_key_value
+            is_first_batch_with_start_date = use_start_date
 
             if replication_key_metadata is None:
                 # If no replication key exists, just do a full table sync
@@ -88,15 +95,22 @@ def sync_table(mysql_conn, catalog_entry, state, columns, config):  # pylint: di
                             not isinstance(current_replication_key_value, pendulum.DateTime)):
                         current_replication_key_value = pendulum.parse(current_replication_key_value)
 
-                    # Use > for cursor-based pagination to avoid duplicates
-                    select_sql += f" WHERE `{replication_key_metadata}` > %(replication_key_value)s " \
+                    # Use >= for first batch with start_date to include records at start_date
+                    # Use > for subsequent batches to avoid duplicates
+                    if is_first_batch_with_start_date:
+                        operator = '>='
+                        is_first_batch_with_start_date = False
+                    else:
+                        operator = '>'
+
+                    select_sql += f" WHERE `{replication_key_metadata}` {operator} %(replication_key_value)s " \
                                 f"ORDER BY `{replication_key_metadata}` ASC " \
                                 f"LIMIT {batch_size}"
 
                     params['replication_key_value'] = current_replication_key_value
 
-                    LOGGER.info('Processing batch: replication_key %s > %s, limit %s (cursor-based)',
-                                replication_key_metadata, current_replication_key_value, batch_size)
+                    LOGGER.info('Processing batch: replication_key %s %s %s, limit %s (cursor-based)',
+                                replication_key_metadata, operator, current_replication_key_value, batch_size)
                 else:
                     # First batch - use >= to include the starting value
                     select_sql += f' ORDER BY `{replication_key_metadata}` ASC ' \

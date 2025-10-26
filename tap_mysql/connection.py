@@ -145,7 +145,7 @@ class MySQLConnection(pymysql.connections.Connection):
             # override match hostname for google cloud
             if config.get("internal_hostname"):
                 parsed_hostname = parse_internal_hostname(config["internal_hostname"])
-                ssl.match_hostname = lambda cert, hostname: MATCH_HOSTNAME(
+                ssl.match_hostname = lambda cert, hostname: MATCH_HOSTNAME(  # pylint: disable=deprecated-method
                     cert, parsed_hostname
                 )  # pylint: disable=W1505
 

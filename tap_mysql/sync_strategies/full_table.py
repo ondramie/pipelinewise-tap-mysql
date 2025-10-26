@@ -105,21 +105,28 @@ def generate_pk_clause(catalog_entry, state):
         # This is more efficient than OFFSET for large datasets
         if len(key_properties) == 1:
             # Single primary key - simple cursor-based pagination
-            pk = key_properties[0]
-            escaped_pk = common.escape(pk)
-            sql = f' WHERE {escaped_pk} > {last_pk_fetched[pk]} AND {escaped_pk} <= {max_pk_values[pk]} ORDER BY {escaped_pk} ASC'
+            primary_key = key_properties[0]
+            escaped_pk = common.escape(primary_key)
+            sql = (f' WHERE {escaped_pk} > {last_pk_fetched[primary_key]} '
+                   f'AND {escaped_pk} <= {max_pk_values[primary_key]} '
+                   f'ORDER BY {escaped_pk} ASC')
         else:
             # Composite primary key - use tuple comparison for cursor-based pagination
             pk_comparisons = []
-            for pk in key_properties:
-                escaped_pk = common.escape(pk)
-                pk_comparisons.append(f"{escaped_pk} <= {max_pk_values[pk]}")
+            for primary_key in key_properties:
+                escaped_pk = common.escape(primary_key)
+                pk_comparisons.append(f"{escaped_pk} <= {max_pk_values[primary_key]}")
 
             # Create tuple comparison for cursor-based pagination
-            pk_tuple = f"({', '.join([common.escape(pk) for pk in key_properties])})"
-            last_pk_tuple = f"({', '.join([str(last_pk_fetched[pk]) for pk in key_properties])})"
+            escaped_keys = [common.escape(primary_key) for primary_key in key_properties]
+            pk_tuple = f"({', '.join(escaped_keys)})"
 
-            sql = f' WHERE {pk_tuple} > {last_pk_tuple} AND {" AND ".join(pk_comparisons)} ORDER BY {", ".join(escaped_columns)} ASC'
+            last_pk_values = [str(last_pk_fetched[primary_key]) for primary_key in key_properties]
+            last_pk_tuple = f"({', '.join(last_pk_values)})"
+
+            sql = (f' WHERE {pk_tuple} > {last_pk_tuple} '
+                   f'AND {" AND ".join(pk_comparisons)} '
+                   f'ORDER BY {", ".join(escaped_columns)} ASC')
     else:
         # First batch
         pk_comparisons = [f"{common.escape(pk)} <= {max_pk_values[pk]}" for pk in key_properties]
@@ -128,7 +135,7 @@ def generate_pk_clause(catalog_entry, state):
     return sql
 
 
-def sync_table(mysql_conn, catalog_entry, state, columns, stream_version, config=None):  # pylint: disable=too-many-arguments
+def sync_table(mysql_conn, catalog_entry, state, columns, stream_version, config=None):  # pylint: disable=too-many-arguments,too-many-statements,too-many-nested-blocks,import-outside-toplevel
     common.whitelist_bookmark_keys(generate_bookmark_keys(catalog_entry), catalog_entry.tap_stream_id, state)
 
     bookmark = state.get('bookmarks', {}).get(catalog_entry.tap_stream_id, {})
@@ -152,7 +159,8 @@ def sync_table(mysql_conn, catalog_entry, state, columns, stream_version, config
     if not initial_full_table_complete and not (version_exists and state_version is None):
         singer.write_message(activate_version_message)
 
-    key_props_are_auto_incrementing = pks_are_auto_incrementing(mysql_conn, catalog_entry)
+    key_props_are_auto_incrementing = pks_are_auto_incrementing(
+        mysql_conn, catalog_entry)
 
     with connect_with_backoff(mysql_conn) as open_conn:
         with open_conn.cursor() as cur:
@@ -162,7 +170,8 @@ def sync_table(mysql_conn, catalog_entry, state, columns, stream_version, config
             batch_size = int(config.get('batch_size', 10000)) if config else 10000
 
             if key_props_are_auto_incrementing:
-                LOGGER.info("Detected auto-incrementing primary key(s) - will replicate incrementally with cursor-based pagination")
+                LOGGER.info("Detected auto-incrementing primary key(s) - "
+                           "will replicate incrementally with cursor-based pagination")
                 max_pk_values = singer.get_bookmark(state,
                                                     catalog_entry.tap_stream_id,
                                                     'max_pk_values') or get_max_pk_values(cur, catalog_entry)
@@ -217,11 +226,16 @@ def sync_table(mysql_conn, catalog_entry, state, columns, stream_version, config
                                 batch_row_count += 1
                                 processed_count += 1
 
-                                record_message = common.write_record_message(catalog_entry, stream_version, row, columns, time_extracted)
+                                record_message = common.write_record_message(
+                                    catalog_entry, stream_version, row,
+                                    columns, time_extracted)
 
                                 # Update last_pk_fetched for cursor-based pagination
                                 key_properties = common.get_key_properties(catalog_entry)
-                                last_pk_fetched = {k: v for k, v in record_message.record.items() if k in key_properties}
+                                last_pk_fetched = {
+                                    k: v for k, v in record_message.record.items()
+                                    if k in key_properties
+                                }
 
                                 state = singer.write_bookmark(state,
                                                               catalog_entry.tap_stream_id,

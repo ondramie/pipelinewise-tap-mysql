@@ -301,3 +301,201 @@ class TestIncrementalSyncStrategy(unittest.TestCase):
 
                     # Verify final state has the new replication key value
                     self.assertEqual(state['bookmarks']['test-stream']['replication_key_value'], '2023-01-02T00:00:00+00:00')
+
+    @patch('singer.write_message')
+    def test_sync_table_with_start_date_no_state(self, mock_write_message):
+        """Test that start_date is used when no state exists."""
+        mysql_conn = MagicMock(spec=MySQLConnection)
+        catalog_entry = MagicMock()
+        catalog_entry.tap_stream_id = 'test-stream'
+        catalog_entry.stream = 'test_stream'
+        catalog_entry.schema = Schema(
+            properties={
+                'id': Schema(inclusion='available', type=['null', 'integer']),
+                'val': Schema(inclusion='available', type=['null', 'string']),
+                'updated_at': Schema(inclusion='available', type=['null', 'string'], format='date-time')
+            }
+        )
+        catalog_entry.metadata = [
+            {'breadcrumb': (), 'metadata': {'selected': True, 'database-name': 'test_db', 'replication-key': 'updated_at'}}
+        ]
+
+        state = {}
+        columns = ['id', 'val', 'updated_at']
+        config = {
+            'batch_size': 100,
+            'start_date': '2024-01-01T00:00:00Z'
+        }
+
+        mock_open_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.__enter__.return_value = mock_cursor
+        mock_open_conn.__enter__.return_value = mock_open_conn
+        mock_open_conn.cursor.return_value = mock_cursor
+
+        batch1 = [
+            (1, 'value1', datetime.datetime(2024, 1, 2, 0, 0, 0)),
+            (2, 'value2', datetime.datetime(2024, 1, 3, 0, 0, 0))
+        ]
+
+        def mock_fetchmany_start_date(size):
+            if mock_cursor.fetchmany.call_count == 1:
+                return batch1
+            else:
+                return []
+
+        mock_cursor.fetchmany.side_effect = mock_fetchmany_start_date
+
+        with patch('tap_mysql.sync_strategies.incremental.connect_with_backoff') as mock_connect:
+            mock_connect.return_value = mock_open_conn
+
+            with patch('tap_mysql.sync_strategies.common.row_to_singer_record') as mock_row_to_singer_record:
+                mock_record_messages = [
+                    singer.RecordMessage(stream='test_stream', record={'id': 1, 'val': 'value1', 'updated_at': '2024-01-02T00:00:00+00:00'}, version=1),
+                    singer.RecordMessage(stream='test_stream', record={'id': 2, 'val': 'value2', 'updated_at': '2024-01-03T00:00:00+00:00'}, version=1),
+                ]
+                mock_row_to_singer_record.side_effect = mock_record_messages
+
+                with patch('pendulum.parse') as mock_parse:
+                    mock_parse.return_value = pendulum.datetime(2024, 1, 1, 0, 0, 0)
+
+                    incremental.sync_table(mysql_conn, catalog_entry, state, columns, config)
+
+                    mock_parse.assert_called_with('2024-01-01T00:00:00Z')
+
+                    self.assertEqual(mock_cursor.execute.call_count, 1)
+
+                    sql_call = mock_cursor.execute.call_args_list[0]
+                    sql_query = sql_call[0][0]
+                    sql_params = sql_call[0][1]
+
+                    self.assertIn('WHERE `updated_at` >=', sql_query)
+                    self.assertIn('ORDER BY `updated_at` ASC', sql_query)
+                    self.assertIn('LIMIT 100', sql_query)
+
+                    self.assertEqual(sql_params['replication_key_value'], pendulum.datetime(2024, 1, 1, 0, 0, 0))
+
+                    self.assertEqual(state['bookmarks']['test-stream']['replication_key_value'], '2024-01-03T00:00:00+00:00')
+
+    @patch('singer.write_message')
+    def test_sync_table_with_start_date_and_state(self, mock_write_message):
+        """Test that state takes precedence over start_date when both exist."""
+        mysql_conn = MagicMock(spec=MySQLConnection)
+        catalog_entry = MagicMock()
+        catalog_entry.tap_stream_id = 'test-stream'
+        catalog_entry.stream = 'test_stream'
+        catalog_entry.schema = Schema(
+            properties={
+                'id': Schema(inclusion='available', type=['null', 'integer']),
+                'updated_at': Schema(inclusion='available', type=['null', 'string'], format='date-time')
+            }
+        )
+        catalog_entry.metadata = [
+            {'breadcrumb': (), 'metadata': {'selected': True, 'database-name': 'test_db', 'replication-key': 'updated_at'}}
+        ]
+
+        state = {
+            'bookmarks': {
+                'test-stream': {
+                    'replication_key': 'updated_at',
+                    'replication_key_value': '2024-02-01T00:00:00+00:00',
+                    'version': 1
+                }
+            }
+        }
+        columns = ['id', 'updated_at']
+        config = {
+            'batch_size': 100,
+            'start_date': '2024-01-01T00:00:00Z'
+        }
+
+        mock_open_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.__enter__.return_value = mock_cursor
+        mock_open_conn.__enter__.return_value = mock_open_conn
+        mock_open_conn.cursor.return_value = mock_cursor
+
+        def mock_fetchmany_with_state(size):
+            if mock_cursor.fetchmany.call_count == 1:
+                return [(1, datetime.datetime(2024, 2, 2, 0, 0, 0))]
+            else:
+                return []
+
+        mock_cursor.fetchmany.side_effect = mock_fetchmany_with_state
+
+        with patch('tap_mysql.sync_strategies.incremental.connect_with_backoff') as mock_connect:
+            mock_connect.return_value = mock_open_conn
+
+            with patch('tap_mysql.sync_strategies.common.row_to_singer_record') as mock_row_to_singer_record:
+                mock_record_messages = [
+                    singer.RecordMessage(stream='test_stream', record={'id': 1, 'updated_at': '2024-02-02T00:00:00+00:00'}, version=1),
+                ]
+                mock_row_to_singer_record.side_effect = mock_record_messages
+
+                with patch('pendulum.parse') as mock_parse:
+                    mock_parse.return_value = pendulum.datetime(2024, 2, 1, 0, 0, 0)
+
+                    incremental.sync_table(mysql_conn, catalog_entry, state, columns, config)
+
+                    mock_parse.assert_called_with('2024-02-01T00:00:00+00:00')
+
+                    sql_call = mock_cursor.execute.call_args_list[0]
+                    sql_query = sql_call[0][0]
+
+                    self.assertIn('WHERE `updated_at` >', sql_query)
+
+                    self.assertEqual(state['bookmarks']['test-stream']['replication_key_value'], '2024-02-02T00:00:00+00:00')
+
+    @patch('singer.write_message')
+    def test_sync_table_without_start_date_or_state(self, mock_write_message):
+        """Test that when neither start_date nor state exists, all records are synced."""
+        mysql_conn = MagicMock(spec=MySQLConnection)
+        catalog_entry = MagicMock()
+        catalog_entry.tap_stream_id = 'test-stream'
+        catalog_entry.stream = 'test_stream'
+        catalog_entry.schema = Schema(
+            properties={
+                'id': Schema(inclusion='available', type=['null', 'integer']),
+                'updated_at': Schema(inclusion='available', type=['null', 'integer'])
+            }
+        )
+        catalog_entry.metadata = [
+            {'breadcrumb': (), 'metadata': {'selected': True, 'database-name': 'test_db', 'replication-key': 'updated_at'}}
+        ]
+
+        state = {}
+        columns = ['id', 'updated_at']
+        config = {'batch_size': 100}
+
+        mock_open_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.__enter__.return_value = mock_cursor
+        mock_open_conn.__enter__.return_value = mock_open_conn
+        mock_open_conn.cursor.return_value = mock_cursor
+
+        def mock_fetchmany_no_filter(size):
+            if mock_cursor.fetchmany.call_count == 1:
+                return [(1, 100), (2, 200)]
+            else:
+                return []
+
+        mock_cursor.fetchmany.side_effect = mock_fetchmany_no_filter
+
+        with patch('tap_mysql.sync_strategies.incremental.connect_with_backoff') as mock_connect:
+            mock_connect.return_value = mock_open_conn
+
+            with patch('tap_mysql.sync_strategies.common.row_to_singer_record') as mock_row_to_singer_record:
+                mock_record_messages = [
+                    singer.RecordMessage(stream='test_stream', record={'id': 1, 'updated_at': 100}, version=1),
+                    singer.RecordMessage(stream='test_stream', record={'id': 2, 'updated_at': 200}, version=1),
+                ]
+                mock_row_to_singer_record.side_effect = mock_record_messages
+
+                incremental.sync_table(mysql_conn, catalog_entry, state, columns, config)
+
+                sql_call = mock_cursor.execute.call_args_list[0]
+                sql_query = sql_call[0][0]
+
+                self.assertNotIn('WHERE', sql_query)
+                self.assertIn('ORDER BY `updated_at` ASC', sql_query)
+                self.assertIn('LIMIT 100', sql_query)
